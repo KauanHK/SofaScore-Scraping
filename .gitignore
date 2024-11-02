@@ -3,3 +3,5 @@ tests.py
 database/
 __pycache__
 *.ipynb
+*.csv
+*.json
