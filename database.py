@@ -1,4 +1,5 @@
 import requests
+import pandas as pd
 import csv
 import os
 from utils import Urls, FileNames
@@ -9,6 +10,8 @@ class Score(NamedTuple):
     all: int
     t1: int
     t2: int
+
+class SobreCargaDeAcessos(BaseException): ...
 
 class Base:
 
@@ -66,7 +69,11 @@ class MainTournaments(Base):
     def json(self) -> Dict[str, int]:
 
         url = Urls.main_tournaments()
-        response_data = requests.get(url).json()
+        response = requests.get(url)
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError:
+            raise SobreCargaDeAcessos('Aparentemente você usou a api do SofaScore mais do que deveria e agora foi impedido de buscar dados :(')
         response_data = response_data["uniqueTournaments"]
         data = {}
         for t in response_data:
@@ -102,6 +109,7 @@ class Tournament(Base):
 
     def __init__(self, id: int, category: Category):
         super().__init__(Season, id)
+        self.category = category
 
     def json(self) -> Dict[str, int]:
         
@@ -129,18 +137,23 @@ class Season(Base):
     def load(self, n: int = -1) -> List["Round"]:
 
         rounds: List[Round] = []
-        r = self.current_round - max(n-1, 0)
-        while r <= self.current_round and r > 0:
-            print(f'Round {r}/{self.current_round}', end='\r')
-            round = Round(r, self)
+        if n < 1:
+            n = 1
+        else:
+            n = self.current_round - n - 1
+
+        while n < self.current_round:
+            print(f'Round {n}/{self.current_round}', end='\r')
+            round = Round(n, self)
             rounds.append(round)
-            r += 1
+            n += 1
         print()
         return rounds
     
     def input(self) -> list["Round"]:
         print('Todas as partidas serão carregadas por padrão')
-        n = int(input('Quantas rodadas você deseja carregar? '))
+        n = input('Quantas rodadas você deseja carregar? ')
+        n = -1 if not n else int(n)
         return self.load(n)
 
     
@@ -150,15 +163,19 @@ class Round(Base):
         super().__init__(Match)
         self.round = n
         self.season = season
+        self.name: str | None = None
 
     def load(self) -> List["Match"]:
         url = Urls.season(self.season.tournament.id, self.season.id, self.round)
         data = requests.get(url).json()
         data = data["events"]
+        self.name = data[0]["season"]["name"]
 
         round: list[Match] = []
         for match in data:
             
+            if not match["homeScore"]:
+                continue
             home_id = match["homeTeam"]["id"]
             home_name = match["homeTeam"]["name"]
             all = match["homeScore"]["normaltime"]
@@ -174,7 +191,7 @@ class Round(Base):
             away = Team(away_id, away_name, Score(all, t1, t2))
 
             id = match["id"]
-            m = Match(id, home, away)
+            m = Match(id, self, home, away)
             round.append(m)
 
         return round
@@ -193,56 +210,78 @@ class Round(Base):
 
 class Match:
 
-    def __init__(self, id: int, home: "Team", away: "Team"):
+    def __init__(self, id: int, round: Round, home: "Team", away: "Team"):
         self.id = id
+        self.round = round
         self.home = home
         self.away = away
 
-    def json(self) -> List[List]:
+    def json(self) -> Dict:
 
         url = Urls.statistics(self.id)
         data = requests.get(url).json()
+        if "statistics" not in data:
+            return None
         data = data["statistics"]
 
-        columns = ['Team', 'Home', 'Away', 'Period']
-        table: dict = {}
-        for stats in data:
-            period = stats["period"]
-            table[period] = {
-                "home": {
-                    "Team": self.home.name,
-                    "Home": self.home.name,
-                    "Away": self.away.name,
-                    "Period": period
-                },
-                "away": {
-                    "Team": self.away.name,
-                    "Home": self.home.name,
-                    "Away": self.away.name,
-                    "Period": period
-                }
-            }
+        table: dict[str, list] = {
+            'Team': [],
+            'Home': [],
+            'Away': [],
+            'Period': []
+        }
+
+        columns = set()
+
+        for i, stats in enumerate(data):
+
+            table['Team'].append(self.home.name)
+            table["Home"].append(self.home.name)
+            table["Away"].append(self.away.name)
+            table["Period"].append(stats["period"])
+
+            table['Team'].append(self.away.name)
+            table["Home"].append(self.home.name)
+            table["Away"].append(self.away.name)
+            table["Period"].append(stats["period"])
 
             groups = stats["groups"]
+            h = set()
             for group in groups:
 
                 stats = group["statisticsItems"]
-
                 for stat in stats:
 
-                    if stat["name"] not in columns:
-                        columns.append(stat["name"])
+                    column = stat["name"]
+                    home = stat["home"]
+                    away = stat["away"]
 
-                    table[period]["home"][stat["name"]] = stat["home"]
-                    table[period]["away"][stat["name"]] = stat["away"]
+                    if column in h:
+                        continue
+                    h.add(column)
 
+                    columns.add(column)
+                    
+                    default = [] + [None]*i*2
+                    table[column] = table.get(column, default) + [home, away]
+
+            for column in columns:
+                if column not in h:
+                    table[column] += [None, None]
+
+        return table
+
+    def csv(self) -> List[List]:
+
+        data = self.json()
+        columns = data['columns']
         result = [columns]
-        for period in table:
+        for period in data:
             home_stats = []
             away_stats = []
             for c in columns:
-                home_stats.append(table[period]['home'].get(c, None))
-                away_stats.append(table[period]['away'].get(c, None))
+                home_stats.append(data[period]['home'].get(c, None))
+                away_stats.append(data[period]['away'].get(c, None))
             result.append(home_stats)
             result.append(away_stats)
                     
@@ -252,12 +291,31 @@ class Match:
 
     def save(self) -> None:
 
-        file_path = os.path.join('database', f'{self.home.name} x {self.away.name}.csv')
-        os.makedirs('database', exist_ok=True)
+        file_path = f'{self.round.name.replace('/', '-')}.csv'
+        print(f'Rodada {self.round.round}: Salvando em {file_path}...')
 
-        with open(file_path, 'w', newline='') as f:
-            csv.writer(f).writerows(self.json())
+        new_data = self.json()
+        if new_data is None:
+            print(f'Erro ao buscar dados de {self.home.name} x {self.away.name}')
+            return
 
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                current_data = list(csv.reader(f, ))
+
+            current_data = {column: [s[i] for s in current_data[1:]] for i, column in enumerate(current_data[0])}
+
+            length = -1
+            for column in current_data:
+                new_data[column] = current_data[column] + new_data.get(column, [])
+                length = max(length, len(new_data[column]))
+
+            for column in new_data:
+                if len(new_data[column]) < length:
+                    new_data[column] = [None]*(length-len(new_data[column])) + new_data[column]
+
+        df = pd.DataFrame(new_data)
+        df.to_csv(file_path, index=False)
 
 class Team:
      
