@@ -1,8 +1,7 @@
-import requests
 import json
 import csv
 import os
-from typing import Literal, Union, Any
+from typing import Literal, Union, Any, NamedTuple
 
 
 
@@ -55,6 +54,13 @@ class FileNames:
 
 
 File = Literal["categories", "category", "tournament", "season", "statistics"]
+
+class Score(NamedTuple):
+    all: int
+    t1: int
+    t2: int
+
+class SobreCargaDeAcessos(BaseException): ...
 
 def get_file_path(data: str, category_name: str | None = None, name: str | None = None):
     """Retorna o caminho do arquivo"""

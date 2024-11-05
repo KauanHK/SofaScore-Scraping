@@ -1,51 +1,21 @@
 import requests
-import pandas as pd
+# import pandas as pd
 import csv
 import os
-from utils import Urls, FileNames
-from typing import Union, Callable, List, Dict, NamedTuple
+from utils import Urls, Score, SobreCargaDeAcessos
+from typing import Union, Callable, List, Dict
 
-
-class Score(NamedTuple):
-    all: int
-    t1: int
-    t2: int
-
-class SobreCargaDeAcessos(BaseException): ...
 
 class Base:
 
-    def __init__(self, next: Union["NextData", None] = None, id: int | None = None):
-        self.id = id
-        self._next: NextData = self._get_next(next)
+    url: str
 
-    def _get_next(self, next: "NextData") -> Callable:
-        
-        dict_next = {
-            MainTournaments: lambda id: next(id, Category(id)),
-            Categories: lambda id: next(id),
-            Category: lambda id: next(id)
-        }
-        default = lambda id: next(id, self)
-        return dict_next.get(next, default)
-    
+    def __init__(self, id: int, name: str):
+        self.id = id
+        self.name = name
+
     def json(self) -> Dict:
         raise NotImplementedError(f'{self.__class__.__name__} não implementou o método json')
-    
-    def load(self, n: int = -1) -> List["NextData"]:
-        
-        data_json = self.json()
-        list_ids = list(data_json.values())
-        data = []
-        i = 0
-        if n < 1:
-            n = len(list_ids)
-        while i < n and i < len(list_ids):
-            print(f'{self.__class__.__name__}... {i}/{n}', end='\r')
-            data.append(self._next(list_ids[i]))
-            i += 1
-        print(f'{self.__class__.__name__}... {i}/{n}')
-        return data
     
     def input(self) -> "NextData":
 
@@ -60,68 +30,113 @@ class Base:
         option = list(data)[n-1]
         return self._next(data[option])
 
+    def api_json(self, msg: str | None = None) -> Dict:
+
+        print(msg)
+        response = requests.get(self.url)
+        if response.status_code == 403:
+            raise SobreCargaDeAcessos('Você fez requisições demais para o SofaScore e seu acesso foi bloquado temporariamente')
+        return response.json()
 
 class MainTournaments(Base):
 
-    def __init__(self):
-        super().__init__(Tournament)
+    def __init__(self) -> None:
+        self.url = Urls.main_tournaments()
 
+    def load(self) -> List["Tournament"]:
+
+        data: Dict[str, int] = self.json()
+        result: List[Tournament] = []
+        for name_id, category in zip(data.items(), self._categories):
+            name, id = name_id
+            tournament = Tournament(id, name, category)
+            result.append(tournament)
+        return result
+    
     def json(self) -> Dict[str, int]:
 
-        url = Urls.main_tournaments()
-        response = requests.get(url)
-        try:
-            data = response.json()
-        except requests.exceptions.JSONDecodeError:
-            raise SobreCargaDeAcessos('Aparentemente você usou a api do SofaScore mais do que deveria e agora foi impedido de buscar dados :(')
+        response_data = self.api_json('Carregando principais torneios...')
         response_data = response_data["uniqueTournaments"]
         data = {}
+        self._categories = []
         for t in response_data:
             data[t["name"]] = t["id"]
+            self._categories.append(Category(t["id"], t["name"]))
         return data
 
 class Categories(Base):
 
-    def __init__(self):
-        super().__init__(Category)
+    def load(self) -> List["Category"]:
+
+        data: Dict[str, int] = self.json()
+        result: List[Category] = []
+        for name, id in data.items():
+            category = Category(id, name)
+            result.append(category)
+        return result
 
     def json(self)  -> Dict[str, int]:
 
-        url = Urls.categories()
-        data = requests.get(url).json()
+        data = self.api_json('Carregando categorias...')
         data = data["categories"]
         data = {c["name"]: c["id"] for c in data}
         return dict(sorted(data.items(), key=lambda kv: kv[0]))
     
 class Category(Base):
     
-    def __init__(self, id: int):
-        super().__init__(Tournament, id)
-    
-    def json(self) -> Dict[str, Dict]:
+    def __init__(self, id: int, name: str | None = None):
+        super().__init__(id, name)
 
-        url = Urls.category(self.id)
-        data = requests.get(url).json()
+    def load(self) -> List["Tournament"]:
+
+        data: Dict[str, int] = self.json()
+        result: List[Tournament] = []
+        for name, id in data.items():
+            category = Tournament(id, name, self)
+            result.append(category)
+        return result
+    
+    def json(self) -> Dict[str, int]:
+
+        data = self.api_json(f'Carregando categoria {self.name}...')
         data = data["groups"][0]["uniqueTournaments"]
         return {t["name"]: t["id"] for t in data}
 
 class Tournament(Base):
 
-    def __init__(self, id: int, category: Category):
-        super().__init__(Season, id)
+    def __init__(
+            self,
+            id: int,
+            name: str | None = None,
+            category: Category | None = None
+            ) -> None:
+        super().__init__(id, name)
         self.category = category
+
+    def load(self) -> List["Season"]:
+
+        data: Dict[str, int] = self.json()
+        result: List[Season] = []
+        for name, id in data.items():
+            season = Season(id, name, self)
+            result.append(season)
+        return result
 
     def json(self) -> Dict[str, int]:
         
-        url = Urls.tournament(self.id)
-        data = requests.get(url).json()
+        data = self.api_json(f'Carregando {self.name}...')
         data = data["seasons"]
         return {s["name"]: s["id"] for s in data}
 
 class Season(Base):
 
-    def __init__(self, id: int, tournament: Tournament):
-        super().__init__(Round, id)
+    def __init__(
+            self,
+            id: int,
+            name: str | None = None,
+            tournament: Tournament | None = None,
+            ) -> None:
+        super().__init__(id, name)
         self.tournament = tournament
         self._cr: int | None = None
 
@@ -130,19 +145,21 @@ class Season(Base):
         if self._cr is not None:
             return self._cr
         url = Urls.rounds(self.tournament.id, self.id)
+        print('Estamos na rodada...', end='\r')
         data = requests.get(url).json()
         self._cr = len(data["rounds"])
+        print(f'Estamos na rodada {self._cr}!')
         return self._cr
     
-    def load(self, n: int = -1) -> List["Round"]:
+    def load(self, n: int | None = None) -> List["Round"]:
 
         rounds: List[Round] = []
-        if n < 1:
-            n = 1
+        if n is None:
+            n = self.current_round
         else:
-            n = self.current_round - n - 1
+            n = self.current_round - n + 1
 
-        while n < self.current_round:
+        while n <= self.current_round:
             print(f'Round {n}/{self.current_round}', end='\r')
             round = Round(n, self)
             rounds.append(round)
@@ -160,36 +177,39 @@ class Season(Base):
 class Round(Base):
 
     def __init__(self, n: int, season: Season):
-        super().__init__(Match)
         self.round = n
         self.season = season
-        self.name: str | None = None
+        self.url = Urls.season(self.season.tournament.id, self.season.id, self.round)
+
+    def _teams(self, match: Dict[str, Dict[str, str]]) -> tuple["Team", "Team"]:
+
+        teams: List[Team] = []
+        for team in ['home', 'away']:
+
+            team_id = match[f"{team}Team"]["id"]
+            team_name = match[f"{team}Team"]["name"]
+            all = match[f"{team}Score"]["normaltime"]
+            t1 = match[f"{team}Score"]["period1"]
+            t2 = match[f"{team}Score"]["period2"]
+
+            team = Team(team_id, team_name, Score(all, t1, t2))
+            teams.append(team)
+
+        return teams
 
     def load(self) -> List["Match"]:
-        url = Urls.season(self.season.tournament.id, self.season.id, self.round)
-        data = requests.get(url).json()
+
+        print(f'Carregando rodada {self.round}...')
+        data = requests.get(self.url).json()
         data = data["events"]
-        self.name = data[0]["season"]["name"]
 
         round: list[Match] = []
         for match in data:
             
             if not match["homeScore"]:
                 continue
-            home_id = match["homeTeam"]["id"]
-            home_name = match["homeTeam"]["name"]
-            all = match["homeScore"]["normaltime"]
-            t1 = match["homeScore"]["period1"]
-            t2 = match["homeScore"]["period2"]
-            home = Team(home_id, home_name, Score(all, t1, t2))
 
-            away_id = match["awayTeam"]["id"]
-            away_name = match["awayTeam"]["name"]
-            all = match["awayScore"]["normaltime"]
-            t1 = match["awayScore"]["period1"]
-            t2 = match["awayScore"]["period2"]
-            away = Team(away_id, away_name, Score(all, t1, t2))
-
+            home, away = self._teams(match)
             id = match["id"]
             m = Match(id, self, home, away)
             round.append(m)
@@ -324,4 +344,4 @@ class Team:
         self.name = name
         self.score = score
 
-NextData = Union["Category", "Tournament", "Season", "Match", "Tournament"]
+NextData = Union[Category, Tournament, Season, Match, Tournament]
