@@ -1,9 +1,9 @@
 import requests
-# import pandas as pd
+import pandas as pd
 import csv
 import os
 from utils import Urls, Score, SobreCargaDeAcessos
-from typing import Union, Callable, List, Dict
+from typing import Union, Literal
 
 
 class Base:
@@ -14,23 +14,20 @@ class Base:
         self.id = id
         self.name = name
 
-    def json(self) -> Dict:
+    def json(self) -> dict:
         raise NotImplementedError(f'{self.__class__.__name__} não implementou o método json')
     
-    def input(self) -> "NextData":
+    def _input(self, options: list[str]) -> int:
 
         os.system('cls' if os.name == 'nt' else 'clear')
-        print('Carregando...', end='\r')
 
-        data = self.json()
-        for i, option in enumerate(data, 1):
+        for i, option in enumerate(options, 1):
             print(f'{i} - {option}')
 
         n = int(input('Escolha uma opção: '))
-        option = list(data)[n-1]
-        return self._next(data[option])
+        return n-1
 
-    def api_json(self, msg: str | None = None) -> Dict:
+    def api_json(self, msg: str | None = None) -> dict:
 
         print(msg)
         response = requests.get(self.url)
@@ -43,17 +40,35 @@ class MainTournaments(Base):
     def __init__(self) -> None:
         self.url = Urls.main_tournaments()
 
-    def load(self) -> List["Tournament"]:
+    def load(self) -> list["Tournament"]:
 
-        data: Dict[str, int] = self.json()
-        result: List[Tournament] = []
+        data: dict[str, int] = self.json()
+        result: list[Tournament] = []
         for name_id, category in zip(data.items(), self._categories):
             name, id = name_id
             tournament = Tournament(id, name, category)
             result.append(tournament)
         return result
     
-    def json(self) -> Dict[str, int]:
+    def input(self) -> "Tournament":
+
+        data = self.api_json('Carregando principais torneios...')
+        data = data["uniqueTournaments"]
+        options = map(lambda t: t["name"], data)
+        i = self._input(options)
+
+        data_tournament = data[i]
+        data_category = data_tournament["category"]
+
+        id = data_tournament["id"]
+        name = data_tournament["name"]
+
+        category_id = data_category["id"]
+        category_name = data_category["name"]
+
+        return Tournament(id, name, Category(category_id, category_name))
+    
+    def json(self) -> dict[str, int]:
 
         response_data = self.api_json('Carregando principais torneios...')
         response_data = response_data["uniqueTournaments"]
@@ -66,37 +81,40 @@ class MainTournaments(Base):
 
 class Categories(Base):
 
-    def load(self) -> List["Category"]:
+    def load(self) -> list["Category"]:
 
-        data: Dict[str, int] = self.json()
-        result: List[Category] = []
+        data: dict[str, int] = self.json()
+        result: list[Category] = []
         for name, id in data.items():
             category = Category(id, name)
             result.append(category)
         return result
 
-    def json(self)  -> Dict[str, int]:
+    def json(self)  -> dict[str, int]:
 
         data = self.api_json('Carregando categorias...')
         data = data["categories"]
         data = {c["name"]: c["id"] for c in data}
         return dict(sorted(data.items(), key=lambda kv: kv[0]))
     
+    def input(self) -> "Category":
+        return self._input()
+    
 class Category(Base):
     
     def __init__(self, id: int, name: str | None = None):
         super().__init__(id, name)
 
-    def load(self) -> List["Tournament"]:
+    def load(self) -> list["Tournament"]:
 
-        data: Dict[str, int] = self.json()
-        result: List[Tournament] = []
+        data: dict[str, int] = self.json()
+        result: list[Tournament] = []
         for name, id in data.items():
             category = Tournament(id, name, self)
             result.append(category)
         return result
     
-    def json(self) -> Dict[str, int]:
+    def json(self) -> dict[str, int]:
 
         data = self.api_json(f'Carregando categoria {self.name}...')
         data = data["groups"][0]["uniqueTournaments"]
@@ -112,21 +130,29 @@ class Tournament(Base):
             ) -> None:
         super().__init__(id, name)
         self.category = category
+        self.url = Urls.tournament(self.id)
 
-    def load(self) -> List["Season"]:
+    def load(self) -> list["Season"]:
 
-        data: Dict[str, int] = self.json()
-        result: List[Season] = []
+        data: dict[str, int] = self.json()
+        result: list[Season] = []
         for name, id in data.items():
             season = Season(id, name, self)
             result.append(season)
         return result
 
-    def json(self) -> Dict[str, int]:
+    def json(self) -> dict[str, int]:
         
         data = self.api_json(f'Carregando {self.name}...')
         data = data["seasons"]
         return {s["name"]: s["id"] for s in data}
+    
+    def input(self) -> "Season":
+        data = self.api_json(f"Carregando {self.name if self.name else ''}")
+        data = data["seasons"]
+        options = map(lambda s: s["name"], data)
+        i = self._input(options)
+        return Season(data[i]["id"], data[i]["name"], self)
 
 class Season(Base):
 
@@ -151,9 +177,9 @@ class Season(Base):
         print(f'Estamos na rodada {self._cr}!')
         return self._cr
     
-    def load(self, n: int | None = None) -> List["Round"]:
+    def load(self, n: int | None = None) -> list["Round"]:
 
-        rounds: List[Round] = []
+        rounds: list[Round] = []
         if n is None:
             n = self.current_round
         else:
@@ -181,9 +207,9 @@ class Round(Base):
         self.season = season
         self.url = Urls.season(self.season.tournament.id, self.season.id, self.round)
 
-    def _teams(self, match: Dict[str, Dict[str, str]]) -> tuple["Team", "Team"]:
+    def _teams(self, match: dict[str, dict[str, str]]) -> tuple["Team", "Team"]:
 
-        teams: List[Team] = []
+        teams: list[Team] = []
         for team in ['home', 'away']:
 
             team_id = match[f"{team}Team"]["id"]
@@ -197,7 +223,7 @@ class Round(Base):
 
         return teams
 
-    def load(self) -> List["Match"]:
+    def load(self) -> list["Match"]:
 
         print(f'Carregando rodada {self.round}...')
         data = requests.get(self.url).json()
@@ -236,7 +262,7 @@ class Match:
         self.home = home
         self.away = away
 
-    def json(self) -> Dict:
+    def json(self) -> dict:
 
         url = Urls.statistics(self.id)
         data = requests.get(url).json()
@@ -291,7 +317,7 @@ class Match:
 
         return table
 
-    def csv(self) -> List[List]:
+    def csv(self) -> list[list]:
 
         data = self.json()
         columns = data['columns']
@@ -311,7 +337,7 @@ class Match:
 
     def save(self) -> None:
 
-        file_path = f'{self.round.name.replace('/', '-')}.csv'
+        file_path = f'{self.round.season.name.replace('/', '-')}.csv'
         print(f'Rodada {self.round.round}: Salvando em {file_path}...')
 
         new_data = self.json()
