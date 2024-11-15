@@ -1,0 +1,10 @@
+__pycache__/
+test*
+
+*.ipynb
+*.csv
+*.json
+
+db.sqlite3
+database.py
+user.py

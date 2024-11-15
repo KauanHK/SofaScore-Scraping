@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <title>Estatísticas de Futebol</title>
+</head>
+<body>
+
+    <!-- Menu Superior -->
+    <div class="menu">
+        <h1>Estatísticas de Futebol</h1>
+        <div class="auth-buttons">
+
+            {% if user %}
+            <p>Hello, {{ username }}</p>
+            <a href="{{ url_for('index_page') }}">Logout</a>
+            {% else %}
+            <a href="{{ url_for('login_get') }}">Login</a>
+            <a href="{{ url_for('register_get') }}">Registrar-se</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Container Principal -->
+    <div class="container">
+        <div class="tabs">
+            <!-- Abas dos Torneios -->
+            <div class="tab">
+                <button onclick="toggleTabContent('brasileirao')">Brasileirão Série A</button>
+                <div class="tab-content" id="brasileirao">
+                    <button onclick="openPopup('Brasileirão Série A 2024')">Brasileirão Série A 2024</button>
+                    <button onclick="openPopup('Brasileirão Série A 2023')">Brasileirão Série A 2023</button>
+                    <!-- Outras temporadas -->
+                </div>
+            </div>
+            <div class="tab">
+                <button onclick="toggleTabContent('champions')">UEFA Champions League</button>
+                <div class="tab-content" id="champions">
+                    <button onclick="openPopup('Champions League 2024')">Champions League 2024</button>
+                    <button onclick="openPopup('Champions League 2023')">Champions League 2023</button>
+                    <!-- Outras temporadas -->
+                </div>
+            </div>
+            <!-- Repetir estrutura para outros torneios -->
+        </div>
+    </div>
+
+    <!-- Popup para Seleção de Rodadas -->
+    <div class="popup" id="roundPopup">
+        <div class="popup-content">
+            <h2>Selecionar Rodadas</h2>
+            <p id="selectedSeason"></p>
+            <input type="number" id="roundsInput" placeholder="Número de rodadas (máx 10)" min="1" max="10">
+            <button onclick="confirmRounds()">Confirmar</button>
+            <button onclick="closePopup()">Cancelar</button>
+        </div>
+    </div>
+
+</body>
+</html>
