@@ -1,0 +1,8 @@
+__pycache__/
+test*
+
+*.ipynb
+
+db.sqlite3
+database.py
+user.py
