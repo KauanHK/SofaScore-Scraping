@@ -16,6 +16,7 @@ def index_page():
 
 @app.route('/download/<path:season>')
 def download(season: str):
+    id = Season.get_id(season)
     season = Season()
 
 # @app.get('/register')
