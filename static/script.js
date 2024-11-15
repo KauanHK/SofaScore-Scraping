@@ -1,7 +1,12 @@
 const abas = document.querySelectorAll('.tab');
 const tabContents = document.querySelectorAll('.tab-content');
 
-abas.forEach((aba, i) => aba.addEventListener('click', () => tabContents[i].classList.toggle('ativo')));
+let selectedTournament = null;
+
+abas.forEach((aba, i) => aba.addEventListener('click', () => {
+    tabContents[i].classList.toggle('ativo');
+    selectedTournament = aba.innerText;
+}));
 
 
 const buttonsSeasons = document.querySelectorAll('.button-season');
@@ -27,7 +32,7 @@ function confirmRounds() {
     }
     
     // Fazer uma requisição para o backend
-    fetch(`/download/${encodeURIComponent(season)}?rounds=${rounds}`, {
+    fetch(`/download/${encodeURIComponent(selectedTournament)}/${encodeURIComponent(season)}?rounds=${rounds}`, {
         method: 'GET'
     })
     .then(response => {
